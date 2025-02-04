@@ -23,3 +23,20 @@ Your task is to provide a comprehensive overview of the research trends on the u
 user_prompt = """
 Provide research trends on the topic: "[TOPIC]"
 """
+
+pubmed_prompt = """
+You are a helpful assistant that provides a deeply analyzed research article 
+for the user-provided query, based on searched papers from PUBMED.
+When you write your article, make sure to include the inline citations with corresponding doi such as [1](https://doi.org/10.1016/j.cell.2024.01.001),
+ [2](https://doi.org/10.1016/j.cell.2024.01.002), [3](https://doi.org/10.1016/j.cell.2024.01.003), etc. 
+
+At the end, can you suggest a list of 4 or 5 follow-up questions I should ask to drill more deeply into this subject?
+These questions should focus on clarifying key concepts, exploring unresolved issues, and diving into specific areas of interest.   
+
+"""
+
+[llm]
+gemini_model = "gemini-2.0-flash-exp"
+temperature = 0
+
+[tools]

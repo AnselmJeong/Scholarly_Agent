@@ -1,6 +1,6 @@
 from typing import Optional, Type
 
-from langchain_groq.chat_models import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.retrievers.pubmed import PubMedRetriever
 from langchain_core.tools import tool
@@ -10,6 +10,7 @@ from langchain_core.callbacks import (
 )
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+from metapub.convert import pmid2doi
 
 from dotenv import load_dotenv
 import os
@@ -22,7 +23,7 @@ def _suggest_refined_query(user_input):
     Generates a PubMed-optimized search query using LLM
     """
     # Initialize ChatOpenAI
-    llm = ChatGroq(model="llama3-70b-8192")
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp")
 
     # Create prompt template
     prompt = ChatPromptTemplate.from_messages([
@@ -54,59 +55,35 @@ def _suggest_refined_query(user_input):
         return None
 
 
-@tool
-def pubmed_search(query: str) -> str:
-    """Search PubMed for papers on a given topic"""
-
-    def _format_response(responses):
-        papers = [
-            {
-                "pmid": paper.metadata["uid"],
-                "title": paper.metadata["Title"],
-                "pub_date": paper.metadata["Published"],
-                "abstract": paper.page_content,
-            }
-            for paper in responses
-        ]
-
-        markdown_text = "# PubMed Search Results\n\n"
-
-        for paper in papers:
-            markdown_text += f"## {paper['title']}\n"
-            markdown_text += f"**PMID**: {paper['pmid']} | **Published**: {paper['pub_date']}\n\n"
-            markdown_text += f"**Abstract**:\n{paper['abstract']}\n\n"
-
-        return markdown_text
-
-    pm_retriever = PubMedRetriever(top_k_results=20, api_key=os.getenv("NCBI_API_KEY"))
-    refined_query = _suggest_refined_query(query)
-    responses = pm_retriever.invoke(refined_query)
-
-    return _format_response(responses)
-
-
 class PubMedSearchInput(BaseModel):
-    query: str = Field(description="The topic to search for in PubMed")
+    """Input schema for PubMed search"""
+
+    query: str = Field(
+        description="The search query for PubMed. Can be a research topic, question, or specific medical terms."
+    )
 
 
 class PubMedSearchTool(BaseTool):
     name: str = "pubmed_search"
-    description: str = "Search PubMed for papers on a given topic"
+    description: str = """Search PubMed for scientific papers on biomedical topics. 
+    This tool can find recent research papers, clinical studies, and medical literature."""
     args_schema: Type[BaseModel] = PubMedSearchInput
-    pm_retriever: PubMedRetriever = None  # Add this line
-    refine_query: bool = False  # Add this line
+    pm_retriever: PubMedRetriever = None
+    refine_query: bool = False
+    return_direct: bool = True
 
-    def __init__(self, api_key: str, top_k_results: int = 20, refine_query: bool = False):
+    def __init__(self, top_k_results: int = 10, refine_query: bool = False):
         super().__init__()
-        if not api_key:
-            raise ValueError("NCBI API key is required. Please set the NCBI_API_KEY environment variable.")
-        self.pm_retriever = PubMedRetriever(top_k_results=top_k_results, api_key=api_key)
+        if not os.getenv("NCBI_API_KEY"):
+            raise ValueError("NCBI API key is required")
+        self.pm_retriever = PubMedRetriever(top_k_results=top_k_results, api_key=os.getenv("NCBI_API_KEY"))
         self.refine_query = refine_query
 
     def _format_response(self, responses):
         papers = [
             {
                 "pmid": paper.metadata["uid"],
+                "doi": pmid2doi(paper.metadata["uid"]),
                 "title": paper.metadata["Title"],
                 "pub_date": paper.metadata["Published"],
                 "abstract": paper.page_content,
@@ -115,22 +92,24 @@ class PubMedSearchTool(BaseTool):
         ]
 
         markdown_text = "# PubMed Search Results\n\n"
-
         for paper in papers:
             markdown_text += f"## {paper['title']}\n"
-            markdown_text += f"**PMID**: {paper['pmid']} | **Published**: {paper['pub_date']}\n\n"
+            markdown_text += (
+                f"**PMID**: {paper['pmid']} | **DOI**: {paper['doi']} | **Published**: {paper['pub_date']}\n\n"
+            )
             markdown_text += f"**Abstract**:\n{paper['abstract']}\n\n"
-
+            markdown_text += "---\n\n"  # Added separator between papers
         return markdown_text
 
     def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+        """Execute the PubMed search"""
         if self.refine_query:
             query = _suggest_refined_query(query)
-
         responses = self.pm_retriever.invoke(query)
         return self._format_response(responses)
 
-    def _arun(self, query: str, run_manager: Optional[AsyncCallbackManagerForToolRun] = None) -> str:
+    async def _arun(self, query: str, run_manager: Optional[AsyncCallbackManagerForToolRun] = None) -> str:
+        """Asynchronously execute the PubMed search"""
         return self._run(query, run_manager)
 
 
